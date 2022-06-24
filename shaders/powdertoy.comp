@@ -1,0 +1,153 @@
+#version 460
+
+precision highp float;
+precision highp int;
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+
+uniform int time;
+
+uniform uint dimension;
+uniform uint maxVelocity;
+uniform uint spacing;
+
+uniform uint blockType;
+uniform bool placeBlock;
+
+
+layout(binding = 0, std430) restrict readonly buffer BlockLocation {
+    uvec3 blockLocation;
+};
+
+
+layout(r32ui, binding = 1) uniform restrict uimage3D gridTexture;
+
+
+// adapted from https://www.shadertoy.com/view/4djSRW (volume warning!)
+float random4to1(vec4 p4) {
+	p4  = fract(p4 * vec4(.1031f, .1030f, .0973f, .1099f));
+    p4 += dot(p4, p4.wzxy + 33.33f);
+    return fract((p4.x + p4.y + p4.z) * p4.w);
+}
+
+vec2 random4to2(vec4 p4) {
+	p4  = fract(p4 * vec4(.1031f, .1030f, .0973f, .1099f));
+    p4 += dot(p4, p4.wzxy + 33.33f);
+    return fract((p4.xz + p4.yw + p4.zx) * p4.wy);
+}
+
+vec3 random4to3(vec4 p4) {
+	p4  = fract(p4 * vec4(.1031f, .1030f, .0973f, .1099f));
+    p4 += dot(p4, p4.wzxy + 33.33f);
+    return fract((p4.xyz + p4.yzw + p4.zwx) * p4.wxy);
+}
+
+vec4 random4to4(vec4 p4)
+{
+	p4 = fract(p4  * vec4(.1031f, .1030f, .0973f, .1099f));
+    p4 += dot(p4, p4.wzxy + 33.33f);
+    return fract((p4.xxyz+p4.yzzw)*p4.zywx);
+}
+
+
+uint swapIfAvailable(ivec3 pos, ivec3 nPos, uint voxel) {
+	if(imageLoad(gridTexture, nPos).r == 0) {
+		imageStore(gridTexture, nPos, uvec4(voxel));
+		voxel = 0;
+		imageStore(gridTexture, pos, uvec4(voxel));
+	}
+
+	return voxel;
+}
+
+#define AIR 0
+#define ROCK 1
+#define SAND 2
+uint Sand(uint voxel, ivec3 pos);
+
+#define WATER 3
+uint Water(uint voxel, ivec3 pos);
+
+
+void main() {
+	ivec3 pos = 3 * ivec3(gl_GlobalInvocationID.xyz) + ivec3(time%3, (time/3)%3, (time/9)%3);
+
+	if(all(lessThan(pos, ivec3(dimension)))) {
+		uint voxel = imageLoad(gridTexture, pos).r;
+
+		if(voxel == SAND) voxel = Sand(voxel, pos);
+		else if(voxel == WATER) voxel = Water(voxel, pos);
+
+		if(distance(pos, blockLocation) < 5.f) {
+			if(placeBlock) {
+				if(blockType == AIR) {
+					if(voxel != AIR)
+						imageStore(gridTexture, pos, uvec4(blockType));
+				}
+				else if(voxel == AIR)
+					imageStore(gridTexture, pos, uvec4(blockType));
+			}
+		}
+	}
+}
+
+
+uint Sand(uint voxel, ivec3 pos) {
+	if(pos.y > 0) {
+		// straight down
+		voxel = swapIfAvailable(pos, pos + ivec3(0, -1, 0), voxel);
+		if(voxel != SAND) return voxel;
+
+		// lateral-down
+		ivec4 rand = ivec4(floor(random4to4(vec4(pos, time)) * vec4(1.999f, 1.999f, 2.999f, 2.999f)));
+		rand.xy = (2 * rand.xy - 1);
+
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) {
+				ivec2 nPos = (ivec2(i, j) * rand.xy + rand.zw) % 3 - 1;
+				if(nPos == ivec2(0)) continue;
+				voxel = swapIfAvailable(pos, pos + ivec3(nPos.x, -1, nPos.y), voxel);
+				if(voxel != SAND) return voxel;
+			}
+		}
+	}
+
+	return voxel;
+}
+
+
+uint Water(uint voxel, ivec3 pos) {
+	if(pos.y > 0) {
+		// straight down
+		voxel = swapIfAvailable(pos, pos + ivec3(0, -1, 0), voxel);
+		if(voxel != WATER) return voxel;
+	}
+
+	ivec4 rand = ivec4(floor(random4to4(vec4(pos, time)) * vec4(1.999f, 1.999f, 2.999f, 2.999f)));
+	rand.xy = (2 * rand.xy - 1);
+
+	// lateral-down
+	if(pos.y > 0) {
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) {
+				ivec2 nPos = (ivec2(i, j) * rand.xy + rand.zw) % 3 - 1;
+				if(nPos == ivec2(0)) continue;
+				voxel = swapIfAvailable(pos, pos + ivec3(nPos.x, -1, nPos.y), voxel);
+				if(voxel != WATER) return voxel;
+			}
+		}
+	}
+
+	// lateral
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++) {
+			ivec2 nPos = (ivec2(i, j) * rand.xy + rand.zw) % 3 - 1;
+			if(nPos == ivec2(0)) continue;
+			voxel = swapIfAvailable(pos, pos + ivec3(nPos.x, 0, nPos.y), voxel);
+			if(voxel != WATER) return voxel;
+		}
+	}
+
+	return voxel;
+}
