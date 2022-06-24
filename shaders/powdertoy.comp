@@ -10,7 +10,6 @@ uniform int time;
 
 uniform uint dimension;
 uniform uint maxVelocity;
-uniform uint spacing;
 
 uniform uint blockType;
 uniform bool placeBlock;
@@ -51,16 +50,6 @@ vec4 random4to4(vec4 p4)
 }
 
 
-uint swapIfAvailable(ivec3 pos, ivec3 nPos, uint voxel) {
-	if(imageLoad(gridTexture, nPos).r == 0) {
-		imageStore(gridTexture, nPos, uvec4(voxel));
-		voxel = 0;
-		imageStore(gridTexture, pos, uvec4(voxel));
-	}
-
-	return voxel;
-}
-
 #define AIR 0
 #define ROCK 1
 #define SAND 2
@@ -92,6 +81,16 @@ void main() {
 	}
 }
 
+
+uint swapIfAvailable(ivec3 pos, ivec3 nPos, uint voxel) {
+	if(imageLoad(gridTexture, nPos).r == 0) {
+		imageStore(gridTexture, nPos, uvec4(voxel));
+		voxel = 0;
+		imageStore(gridTexture, pos, uvec4(voxel));
+	}
+
+	return voxel;
+}
 
 uint Sand(uint voxel, ivec3 pos) {
 	if(pos.y > 0) {

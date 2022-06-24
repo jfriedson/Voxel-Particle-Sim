@@ -50,14 +50,14 @@ void App::loadRTShader(GLuint& rtProgram) {
 
 void App::run() {
 	// constants
-	const glm::uint dimension = 256;
+	const glm::uint dimension = 128;
 
 	const glm::uint maxVelocity = 1;
 	const GLuint simSpacing = 2 * maxVelocity + 1;
 	const int simCubeSize = simSpacing * simSpacing * simSpacing;
 
-	const int simIterations = 1;
-	const int simPartialIter = 27;
+	const int simIterations = 4;
+	const int simPartialIter = simCubeSize;
 
 	// shader related stuff
 	int framebufferWidth, framebufferHeight;

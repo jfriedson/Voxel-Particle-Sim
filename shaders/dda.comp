@@ -13,15 +13,19 @@ uniform mat3 cameraMat;
 uniform float blockDist;
 uniform bool placeBlock;
 
+uniform uint dimension;
+
+
 layout(binding = 0, std430) coherent buffer BlockLocation {
     uvec3 blockLocation;
 };
 
-
 layout(rgba8, binding = 0) restrict writeonly uniform image2D rtTexture;
 layout(r32ui, binding = 1) restrict readonly uniform uimage3D gridTexture;
 
-uniform uint dimension;
+
+// constants
+const float maxDrawDist = 200.f;
 
 
 float minComponent(vec3 v) {
@@ -32,7 +36,6 @@ float maxComponent(vec3 v) {
     return max(max(v.x, v.y), v.z);
 }
 
-const float maxDrawDist = 200.f;
 vec3 castRay(vec3 origin, vec3 dir) {
     vec3 inverseDir = 1.f / dir;
     vec3 bias = inverseDir * origin;
@@ -52,7 +55,7 @@ vec3 castRay(vec3 origin, vec3 dir) {
 	tMin = max(tMin, 0.f);
 
 	// Ray misses bounding cube
-    if (tMin > tMax || tMin > maxDrawDist) {
+    if (tMin > tMax) {
 		if(locationRay) {
 			blockLocation = uvec3(dimension + uint(blockDist));
 			return vec3(1.f);
@@ -72,6 +75,7 @@ vec3 castRay(vec3 origin, vec3 dir) {
     float t = 0.f;
 
 	
+	// block location ray cast
 	if(locationRay) {
 		if(!placeBlock) {
 			ivec3 lastPos = ivec3(dimension + uint(blockDist));
@@ -96,8 +100,9 @@ vec3 castRay(vec3 origin, vec3 dir) {
 
 		return vec3(1.f);
 	}
+	// ray cast for drawing image
 	else {
-	    while (t < (tMax - tMin) && (tMin + t) < maxDrawDist) {
+	    while (t < (tMax - tMin) && (t < maxDrawDist)) {
 	        bvec3 mask = lessThanEqual(sideDist.xyz, min(sideDist.yzx, sideDist.zxy));
 
 	        float t0 = minComponent(sideDist);
@@ -126,6 +131,7 @@ vec3 castRay(vec3 origin, vec3 dir) {
 
     return vec3(0.f);
 }
+
 
 void main() {
 	vec3 rayVec = normalize(vec3((gl_GlobalInvocationID.xy-(0.5f*resolution))/resolution.y, 1.f)) * cameraMat;
