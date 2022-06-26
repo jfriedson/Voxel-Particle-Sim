@@ -13,7 +13,6 @@
 #include <player.h>
 
 
-glm::uint blockType = 1;
 float blockDist = 50.f;
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
@@ -22,7 +21,7 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
 
 
 App::App() {
-	window = voxgl::createWindow("3D Powder Toy", windowWidth, windowHeight);
+	window = voxgl::createWindow("Particle Simulator", windowWidth, windowHeight);
 
 	glfwSetScrollCallback(window, scroll_callback);
 
@@ -34,30 +33,26 @@ App::~App() {
 	voxgl::destroyWindow(window);
 }
 
-void App::loadPTShader(GLuint& ptProgram) {
-	GLuint ptCompShader = voxgl::createShader("./shaders/powdertoy.comp", GL_COMPUTE_SHADER);
-	std::vector<GLuint> ptShaders;
-	ptShaders.emplace_back(ptCompShader);
-	ptProgram = voxgl::createProgram(ptShaders);
-}
-
-void App::loadRTShader(GLuint& rtProgram) {
-	GLuint rtCompShader = voxgl::createShader("./shaders/dda.comp", GL_COMPUTE_SHADER);
-	std::vector<GLuint> rtShaders;
-	rtShaders.emplace_back(rtCompShader);
-	rtProgram = voxgl::createProgram(rtShaders);
-}
 
 void App::run() {
 	// constants
-	const glm::uint dimension = 128;
+	const glm::uint dimension = 512;
+	/*GLint size;
+	glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE, &size);
+	std::cout << "GL_MAX_3D_TEXTURE_SIZE is " << size << " in each dimension." << std::endl;*/
 
-	const glm::uint maxVelocity = 1;
-	const GLuint simSpacing = 2 * maxVelocity + 1;
-	const int simCubeSize = simSpacing * simSpacing * simSpacing;
+	const glm::uint simLocalDim = 8;  // 8 is the max work group dimension on my gtx 1080
+	const glm::uint maxVelocity = simLocalDim / 2;  // max velocity is limited by shader work group size
+	const glm::uint simSpacing = 2 * simLocalDim;
 
 	const int simIterations = 4;
-	const int simPartialIter = simCubeSize;
+
+
+	// variable uniforms shared between sim and renderer
+	glm::uint currentFlag = 0;
+	glm::uint placeBlock = 0;
+	glm::uint blockType = 1;
+
 
 	// shader related stuff
 	int framebufferWidth, framebufferHeight;
@@ -103,41 +98,40 @@ void App::run() {
 	GLuint quadProgram = voxgl::createProgram(quadShaders);
 
 
-	// variables shared by sim and ray trace
-	glm::uint placeBlock = 0;
-
 	// ray trace shader
 	GLuint rtProgram;
 	loadRTShader(rtProgram);
 
-	GLuint rtResolutionUniform = glGetUniformLocation(rtProgram, "resolution");
-	GLuint rtCamPosUniform = glGetUniformLocation(rtProgram, "cameraPos");
-	GLuint rtCamMatUniform = glGetUniformLocation(rtProgram, "cameraMat");
-	GLuint rtBlockDistUniform = glGetUniformLocation(rtProgram, "blockDist");
-	GLuint rtPlaceBlock = glGetUniformLocation(rtProgram, "placeBlock");
+	GLuint rtResolution = glGetUniformLocation(rtProgram, "resolution");
+	GLuint rtCamPos = glGetUniformLocation(rtProgram, "cameraPos");
+	GLuint rtCamMat = glGetUniformLocation(rtProgram, "cameraMat");
 	GLuint rtDimension = glGetUniformLocation(rtProgram, "dimension");
+	GLuint rtBlockDist = glGetUniformLocation(rtProgram, "blockDist");
+	GLuint rtPlaceBlock = glGetUniformLocation(rtProgram, "placeBlock");
+
 
 	glUseProgram(rtProgram);
 
-	glUniform2i(rtResolutionUniform, framebufferWidth, framebufferHeight);
+	glUniform2i(rtResolution, framebufferWidth, framebufferHeight);
 	glUniform1ui(rtDimension, dimension);
 
 
-
-	// powder toy shader
+	// particle sim shader
 	GLuint ptProgram;
 	loadPTShader(ptProgram);
 
-	GLuint ptDimension = glGetUniformLocation(ptProgram, "dimension");
-	GLuint ptMaxVelocity = glGetUniformLocation(ptProgram, "maxVelocity");
+	GLuint ptCurrentFlag = glGetUniformLocation(ptProgram, "currentFlag");
+	GLuint ptPartition = glGetUniformLocation(ptProgram, "part");
+	GLuint ptTime = glGetUniformLocation(ptProgram, "time");
 	GLuint ptBlockType = glGetUniformLocation(ptProgram, "blockType");
 	GLuint ptPlaceBlock = glGetUniformLocation(ptProgram, "placeBlock");
-	GLuint ptTimeUniform = glGetUniformLocation(ptProgram, "time");
+	//GLuint ptDimension = glGetUniformLocation(ptProgram, "dimension");
+	//GLuint ptMaxVelocity = glGetUniformLocation(ptProgram, "maxVelocity");
 
 	glUseProgram(ptProgram);
 
-	glUniform1ui(ptDimension, dimension);
-	glUniform1ui(ptMaxVelocity, maxVelocity);
+	//glUniform1ui(ptDimension, dimension);
+	//glUniform1ui(ptMaxVelocity, maxVelocity);
 
 
 	// block location for insertion/deletetion
@@ -168,9 +162,6 @@ void App::run() {
 	glBindImageTexture(1, gridTexture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
 
 
-	/*GLint size;
-	glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE, &size);
-	std::cout << "GL_MAX_3D_TEXTURE_SIZE is " << size << std::endl;*/
 
 	// mutex for shader uniform variables
 	std::mutex dataLock;
@@ -190,11 +181,7 @@ void App::run() {
 		glGenQueries(3, timerQueries);
 
 
-		auto rng = std::minstd_rand{};
-
-		std::vector<glm::int32> voxels;
-		for (int i = 0; i < simCubeSize; i++)
-			voxels.emplace_back(i);
+		//auto rng = std::minstd_rand{};
 
 
 		while (!glfwWindowShouldClose(window)) {
@@ -206,16 +193,15 @@ void App::run() {
 			glUniform1ui(ptPlaceBlock, placeBlock);
 			dataLock.unlock();
 
-
 			glBeginQuery(GL_TIME_ELAPSED, timerQueries[0]);
-			// This must be done here because shaders only guarantee
-			// memory coherency between local invocations.
-			for (int j = 0; j < simIterations; j++) {
-				std::shuffle(voxels.begin(), voxels.end(), rng);
-				for (int i = 0; i < simPartialIter; i++) {
-					glUniform1i(ptTimeUniform, voxels[i]);
+			for (int it = 0; it < simIterations; it++) {
+				glUniform1ui(ptCurrentFlag, currentFlag = (!currentFlag) * 0x80);
+				glUniform1ui(ptTime, glfwGetTime());
+
+				for (int part = 0; part < 8; part++) {
+					glUniform3i(ptPartition, part % 2, (part / 2) % 2, (part / 4) % 2);
 					glDispatchCompute(ptWorkGroups, ptWorkGroups, ptWorkGroups);
-					glMemoryBarrier(GL_ALL_BARRIER_BITS);
+					glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 				}
 			}
 			glEndQuery(GL_TIME_ELAPSED);
@@ -225,15 +211,15 @@ void App::run() {
 			glUseProgram(rtProgram);
 
 			dataLock.lock();
-			glUniform3f(rtCamPosUniform, player.camera.position.x, player.camera.position.y, player.camera.position.z);
-			glUniformMatrix3fv(rtCamMatUniform, 1, GL_FALSE, glm::value_ptr(glm::transpose(player.camera.getMatrix())));
-			glUniform1f(rtBlockDistUniform, blockDist);
+			glUniform3f(rtCamPos, player.camera.position.x, player.camera.position.y, player.camera.position.z);
+			glUniformMatrix3fv(rtCamMat, 1, GL_FALSE, glm::value_ptr(glm::transpose(player.camera.getMatrix())));
+			glUniform1f(rtBlockDist, blockDist);
 			glUniform1ui(rtPlaceBlock, placeBlock);
 			dataLock.unlock();
 
 			glBeginQuery(GL_TIME_ELAPSED, timerQueries[1]);
 			glDispatchCompute(rtX, rtY, 1);
-			glMemoryBarrier(GL_ALL_BARRIER_BITS);
+			glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 			glEndQuery(GL_TIME_ELAPSED);
 
 
@@ -398,7 +384,23 @@ void App::run() {
 	glDeleteTextures(1, &rtTexture);
 	glBindTexture(GL_TEXTURE_3D, 0);
 	glDeleteTextures(1, &gridTexture);
+	//glDeleteTextures(1, &gridTexture1);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 	glDeleteBuffers(1, &blockLocation);
+}
+
+
+void App::loadPTShader(GLuint& ptProgram) {
+	GLuint ptCompShader = voxgl::createShader("./shaders/particlesim.comp", GL_COMPUTE_SHADER);
+	std::vector<GLuint> ptShaders;
+	ptShaders.emplace_back(ptCompShader);
+	ptProgram = voxgl::createProgram(ptShaders);
+}
+
+void App::loadRTShader(GLuint& rtProgram) {
+	GLuint rtCompShader = voxgl::createShader("./shaders/dda.comp", GL_COMPUTE_SHADER);
+	std::vector<GLuint> rtShaders;
+	rtShaders.emplace_back(rtCompShader);
+	rtProgram = voxgl::createProgram(rtShaders);
 }

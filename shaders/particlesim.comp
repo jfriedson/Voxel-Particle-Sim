@@ -3,29 +3,38 @@
 precision highp float;
 precision highp int;
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+const int gDim = 8;
+const int gSpacing = gDim * 2;
+layout(local_size_x = gDim, local_size_y = gDim, local_size_z = gDim) in;
 
+
+uniform uint currentFlag;
+uniform ivec3 part;
 
 uniform int time;
 
-uniform uint dimension;
-uniform uint maxVelocity;
-
 uniform uint blockType;
 uniform bool placeBlock;
+
+//uniform uint dimension;
+//uniform uint maxVelocity;
 
 
 layout(binding = 0, std430) restrict readonly buffer BlockLocation {
     uvec3 blockLocation;
 };
 
-
-layout(r32ui, binding = 1) uniform restrict uimage3D gridTexture;
+const uint FLAG = 0x80;
+const uint TYPE = 0x7F;
+const uint VEL_X = 0xFF000000;
+const uint VEL_Y = 0x00FF0000;
+const uint VEL_Z = 0x0000FF00;
+layout(r32ui, binding = 1) coherent uniform uimage3D gridTexture;
 
 
 // adapted from https://www.shadertoy.com/view/4djSRW (volume warning!)
 float random4to1(vec4 p4) {
-	p4  = fract(p4 * vec4(.1031f, .1030f, .0973f, .1099f));
+	p4 = fract(p4 * vec4(.1031f, .1030f, .0973f, .1099f));
     p4 += dot(p4, p4.wzxy + 33.33f);
     return fract((p4.x + p4.y + p4.z) * p4.w);
 }
@@ -42,8 +51,7 @@ vec3 random4to3(vec4 p4) {
     return fract((p4.xyz + p4.yzw + p4.zwx) * p4.wxy);
 }
 
-vec4 random4to4(vec4 p4)
-{
+vec4 random4to4(vec4 p4) {
 	p4 = fract(p4  * vec4(.1031f, .1030f, .0973f, .1099f));
     p4 += dot(p4, p4.wzxy + 33.33f);
     return fract((p4.xxyz+p4.yzzw)*p4.zywx);
@@ -60,37 +68,58 @@ uint Water(uint voxel, ivec3 pos);
 
 
 void main() {
-	ivec3 pos = 3 * ivec3(gl_GlobalInvocationID.xyz) + ivec3(time%3, (time/3)%3, (time/9)%3);
+	ivec3 pos = ivec3(gl_WorkGroupID * gSpacing) + (part * gDim) + ivec3(gl_LocalInvocationID);
 
-	if(all(lessThan(pos, ivec3(dimension)))) {
-		uint voxel = imageLoad(gridTexture, pos).r;
+	uint voxel = imageLoad(gridTexture, pos).r;
 
-		if(voxel == SAND) voxel = Sand(voxel, pos);
-		else if(voxel == WATER) voxel = Water(voxel, pos);
-
-		if(distance(pos, blockLocation) < 5.f) {
-			if(placeBlock) {
-				if(blockType == AIR) {
-					if(voxel != AIR)
-						imageStore(gridTexture, pos, uvec4(blockType));
-				}
-				else if(voxel == AIR)
-					imageStore(gridTexture, pos, uvec4(blockType));
-			}
+	// if it's air, return quickly to optimize empty space
+	if(voxel == AIR) {
+		if(placeBlock  &&  blockType != AIR  &&  distance(pos, blockLocation) < 5.f) {
+			imageStore(gridTexture, pos, uvec4(currentFlag | blockType));
+			memoryBarrier();
 		}
+
+		return;
+	}
+	// otherwise, if deleting blocks
+	else if(placeBlock  &&  blockType == AIR  &&  distance(pos, blockLocation) < 5.f) {
+		imageStore(gridTexture, pos, uvec4(AIR));
+		memoryBarrier();
+		return;
+	}
+
+	// return if the current particle has already been updated
+	if((voxel & FLAG) == currentFlag)
+		return;
+
+	voxel ^= FLAG;  // toggle flag bit
+	
+	barrier();  // get all voxel values in this group before continuing
+
+	uint newVoxel = voxel;
+	if((voxel & TYPE) == SAND) newVoxel = Sand(voxel, pos);
+	else if((voxel & TYPE) == WATER) newVoxel = Water(voxel, pos);
+
+	if(newVoxel == voxel) {
+		imageStore(gridTexture, pos, uvec4(newVoxel));
+		return;
+	}
+	
+	if(placeBlock  &&  newVoxel == AIR  &&  blockType != AIR  &&  distance(pos, blockLocation) < 5.f) {
+		imageStore(gridTexture, pos, uvec4(currentFlag | blockType));
 	}
 }
 
 
 uint swapIfAvailable(ivec3 pos, ivec3 nPos, uint voxel) {
-	if(imageLoad(gridTexture, nPos).r == 0) {
-		imageStore(gridTexture, nPos, uvec4(voxel));
-		voxel = 0;
-		imageStore(gridTexture, pos, uvec4(voxel));
+	if(imageAtomicCompSwap(gridTexture, nPos, AIR, voxel) == AIR) {
+		imageStore(gridTexture, pos, uvec4(voxel = AIR));
+		memoryBarrier();
 	}
 
 	return voxel;
 }
+
 
 uint Sand(uint voxel, ivec3 pos) {
 	if(pos.y > 0) {

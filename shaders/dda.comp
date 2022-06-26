@@ -3,20 +3,22 @@
 precision highp float;
 precision highp int;
 
-layout(local_size_x = 16, local_size_y = 16) in;
+#define dim 16
+layout(local_size_x = dim, local_size_y = dim) in;
 
 
 uniform ivec2 resolution;
+
 uniform vec3 cameraPos;
 uniform mat3 cameraMat;
+
+uniform uint dimension;
 
 uniform float blockDist;
 uniform bool placeBlock;
 
-uniform uint dimension;
 
-
-layout(binding = 0, std430) coherent buffer BlockLocation {
+layout(binding = 0, std430) restrict buffer BlockLocation {
     uvec3 blockLocation;
 };
 
@@ -25,7 +27,13 @@ layout(r32ui, binding = 1) restrict readonly uniform uimage3D gridTexture;
 
 
 // constants
-const float maxDrawDist = 200.f;
+const float maxDrawDist = 400.f;
+
+const uint TYPE = 0x7F;
+#define AIR 0
+#define ROCK 1
+#define SAND 2
+#define WATER 3
 
 
 float minComponent(vec3 v) {
@@ -85,7 +93,7 @@ vec3 castRay(vec3 origin, vec3 dir) {
 
 		        float t0 = minComponent(sideDist);
 
-				if(imageLoad(gridTexture, pos).r > 0)
+				if(imageLoad(gridTexture, pos).r != 0)
 					break;
 
 		        t = t0;
@@ -102,7 +110,7 @@ vec3 castRay(vec3 origin, vec3 dir) {
 	}
 	// ray cast for drawing image
 	else {
-	    while (t < (tMax - tMin) && (t < maxDrawDist)) {
+	    while (t < (tMax - tMin) && (tMin + t < maxDrawDist)) {
 	        bvec3 mask = lessThanEqual(sideDist.xyz, min(sideDist.yzx, sideDist.zxy));
 
 	        float t0 = minComponent(sideDist);
@@ -110,14 +118,11 @@ vec3 castRay(vec3 origin, vec3 dir) {
 			if(all(equal(pos, blockLocation)))
 				return vec3(.5f);
 
-			uint voxel = imageLoad(gridTexture, pos).r;
-			if(voxel > 0) {
-				if(voxel == 1)
-					return vec3(.26f, .25f, .22f);
-				else if(voxel == 2)
-					return vec3(.98f, .69f, .01f);
-				else if(voxel == 3)
-					return vec3(.17f, .25f, .31f);
+			uint voxel = imageLoad(gridTexture, pos).r & TYPE;
+			if(voxel != 0) {
+				if(voxel == ROCK)		return vec3(.26f, .25f, .22f);
+				else if(voxel == SAND)	return vec3(.98f, .69f, .01f);
+				else if(voxel == WATER)	return vec3(.17f, .25f, .31f);
 			}
 
 	        t = t0;

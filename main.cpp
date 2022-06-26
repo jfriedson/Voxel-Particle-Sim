@@ -1,4 +1,4 @@
-// 3D version of Powder Toy running on GPU using a compute shader.
+// 3D particle simulator running on GPU using a compute shader
 
 #include "app.h"
 
