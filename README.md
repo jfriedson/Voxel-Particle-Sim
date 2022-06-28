@@ -1,11 +1,10 @@
-# 3D Voxel Particles
+# Voxel Particles
 This project simulates particle interactions using voxels in a GLSL compute shader.
 
-This relies on [VoxGL](https://github.com/jfriedson/voxgl) for the OpenGL interaction.
+This relies on [VoxGL](https://github.com/jfriedson/voxgl) for OpenGL interaction.
 
 The screenshots below depict a world size of 256 from a sub-performant implementation. I will update these soon.
 ![Screenshot of waterfall](screenshots/waterfall.png?raw=true)
-![Screenshot of pool of water](screenshots/pool.png?raw=true)
 
 
 ## Objective
@@ -25,10 +24,10 @@ For a fast simulation and stable 60fps use:
 
 
 ## Controls
-Mouse
+Mousef
 - Move - orient camera
 - Left - place blocks
-- Scroll wheel - adjust distance of block placement
+- Scroll wheel - adjust size of block placement
 
 WASD - move
 
@@ -44,12 +43,22 @@ Block selection (number keys)
 - 3 - sand
 - 4 - water
 
+L - toggle grid lines
+
 
 ## Current Limitations
-Due to memory coherency only being guaranteed between shader invocations in the same work group and the fact that my gtx 1080 caps the group size to 8**3, the maximum velocity of a particle is 4 voxels per simulation step on my hardware.  This limitation can be masked by comparing a random value to the fractional part of the velocity and calling the simulation multiple times between renderings.
+Due to memory coherency only being guaranteed between shader invocations in the same work group and the fact that my gtx 1080 caps the group size to 8**3, the maximum velocity of a particle is 4 voxels per simulation step on my hardware.  This limitation can be cover up by comparing a random value to the simulation multiple times between renderings.
+
+The unpredictable nature of shader execution makes it difficult to have particles interact.
 
 
 ## Changelog
+- Some particle interaction (sand sinks in water, kind of) needs work
+
+- Fake lighting based on direction of voxel face.
+
+- Added grid lines. needs tweaking
+
 - Combined the parallel and sequential approaches to provide a significant performance boost that makes simulation about 60 times faster than either of the techniques individually.
 
 - Use an alternating flag to prevent particles from updating more than once a simulation step.
@@ -64,7 +73,6 @@ Due to memory coherency only being guaranteed between shader invocations in the 
 
 - Switch to a kinematic simulation instead of the current cellular automata-like approach for particle movement.
 
-- Experiment with computing the simulation in an SVO and compare the performance to generating an SVO from the dense voxel structure for rendering.
 
 - There is a bug where rendering the camera from a position with a negative component results in a jittery image. It seems to be a miscalculation in the ray origin or angle with negative values. Still searching for the fix.
 

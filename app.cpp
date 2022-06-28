@@ -13,15 +13,15 @@
 #include <player.h>
 
 
-float blockDist = 50.f;
+glm::float32 blockSize = 4.f;
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
-	blockDist = glm::min(glm::max(blockDist + float(yoffset), 0.5f), 100.f);
+	blockSize = glm::min(glm::max(blockSize + float(yoffset), 1.f), 50.f);
 }
 
 
 App::App() {
-	window = voxgl::createWindow("Particle Simulator", windowWidth, windowHeight);
+	window = voxgl::createWindow("Voxel Particle Simulator", windowWidth, windowHeight);
 
 	glfwSetScrollCallback(window, scroll_callback);
 
@@ -36,7 +36,8 @@ App::~App() {
 
 void App::run() {
 	// constants
-	const glm::uint dimension = 512;
+	const int fps = 60;
+	const glm::uint dimension = 256;
 	/*GLint size;
 	glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE, &size);
 	std::cout << "GL_MAX_3D_TEXTURE_SIZE is " << size << " in each dimension." << std::endl;*/
@@ -45,13 +46,17 @@ void App::run() {
 	const glm::uint maxVelocity = simLocalDim / 2;  // max velocity is limited by shader work group size
 	const glm::uint simSpacing = 2 * simLocalDim;
 
-	const int simIterations = 4;
+	const int simIterations = 1;
 
 
 	// variable uniforms shared between sim and renderer
 	glm::uint currentFlag = 0;
 	glm::uint placeBlock = 0;
 	glm::uint blockType = 1;
+	glm::uint drawLines = 0;
+	glm::float32 blockDist = 50.f;
+	glm::uint updateDist = 1;
+	bool distUpdated = true;
 
 
 	// shader related stuff
@@ -107,7 +112,10 @@ void App::run() {
 	GLuint rtCamMat = glGetUniformLocation(rtProgram, "cameraMat");
 	GLuint rtDimension = glGetUniformLocation(rtProgram, "dimension");
 	GLuint rtBlockDist = glGetUniformLocation(rtProgram, "blockDist");
+	GLuint rtBlockSize = glGetUniformLocation(rtProgram, "blockSize");
 	GLuint rtPlaceBlock = glGetUniformLocation(rtProgram, "placeBlock");
+	GLuint rtUpdateDist = glGetUniformLocation(rtProgram, "updateDist");
+	GLuint rtDrawLines = glGetUniformLocation(rtProgram, "drawLines");
 
 
 	glUseProgram(rtProgram);
@@ -122,15 +130,16 @@ void App::run() {
 
 	GLuint ptCurrentFlag = glGetUniformLocation(ptProgram, "currentFlag");
 	GLuint ptPartition = glGetUniformLocation(ptProgram, "part");
-	GLuint ptTime = glGetUniformLocation(ptProgram, "time");
+	GLuint ptRNG = glGetUniformLocation(ptProgram, "rng");
 	GLuint ptBlockType = glGetUniformLocation(ptProgram, "blockType");
+	GLuint ptBlockSize = glGetUniformLocation(ptProgram, "blockSize");
 	GLuint ptPlaceBlock = glGetUniformLocation(ptProgram, "placeBlock");
-	//GLuint ptDimension = glGetUniformLocation(ptProgram, "dimension");
+	GLuint ptDimension = glGetUniformLocation(ptProgram, "dimension");
 	//GLuint ptMaxVelocity = glGetUniformLocation(ptProgram, "maxVelocity");
 
 	glUseProgram(ptProgram);
 
-	//glUniform1ui(ptDimension, dimension);
+	glUniform1ui(ptDimension, dimension);
 	//glUniform1ui(ptMaxVelocity, maxVelocity);
 
 
@@ -170,8 +179,8 @@ void App::run() {
 	glfwMakeContextCurrent(NULL);
 	std::thread render_thread([&]() {
 		glfwMakeContextCurrent(window);
-
-		Timer renderPacer(60);
+		
+		Timer renderPacer(fps);
 
 		GLdouble last_refresh = glfwGetTime();
 		int frames = 0;
@@ -180,8 +189,7 @@ void App::run() {
 		GLuint timerQueries[3];
 		glGenQueries(3, timerQueries);
 
-
-		//auto rng = std::minstd_rand{};
+		auto rng = std::minstd_rand{};
 
 
 		while (!glfwWindowShouldClose(window)) {
@@ -190,13 +198,14 @@ void App::run() {
 
 			dataLock.lock();
 			glUniform1ui(ptBlockType, blockType);
+			glUniform1f(ptBlockSize, blockSize);
 			glUniform1ui(ptPlaceBlock, placeBlock);
 			dataLock.unlock();
 
 			glBeginQuery(GL_TIME_ELAPSED, timerQueries[0]);
 			for (int it = 0; it < simIterations; it++) {
 				glUniform1ui(ptCurrentFlag, currentFlag = (!currentFlag) * 0x80);
-				glUniform1ui(ptTime, glfwGetTime());
+				glUniform1f(ptRNG, float(rng())/ float(rng.max()));
 
 				for (int part = 0; part < 8; part++) {
 					glUniform3i(ptPartition, part % 2, (part / 2) % 2, (part / 4) % 2);
@@ -214,7 +223,11 @@ void App::run() {
 			glUniform3f(rtCamPos, player.camera.position.x, player.camera.position.y, player.camera.position.z);
 			glUniformMatrix3fv(rtCamMat, 1, GL_FALSE, glm::value_ptr(glm::transpose(player.camera.getMatrix())));
 			glUniform1f(rtBlockDist, blockDist);
-			glUniform1ui(rtPlaceBlock, placeBlock);
+			glUniform1f(rtBlockSize, blockSize);
+			glUniform1f(rtPlaceBlock, placeBlock);
+			glUniform1ui(rtUpdateDist, updateDist);
+			distUpdated = true;
+			glUniform1ui(rtDrawLines, drawLines);
 			dataLock.unlock();
 
 			glBeginQuery(GL_TIME_ELAPSED, timerQueries[1]);
@@ -283,37 +296,39 @@ void App::run() {
 				last_refresh = glfwGetTime();
 			}
 
-			// Needs to be fixed
-			/*/ Recompile shaders with 'R' key
+
+			// Recompile shaders with 'R' key
 			if (glfwGetKey(window, GLFW_KEY_R)) {
 				loadPTShader(ptProgram);
 
-				ptDimension = glGetUniformLocation(ptProgram, "dimension");
-				ptMaxVelocity = glGetUniformLocation(ptProgram, "maxVelocity");
-				ptSpacing = glGetUniformLocation(ptProgram, "spacing");
+				ptCurrentFlag = glGetUniformLocation(ptProgram, "currentFlag");
+				ptPartition = glGetUniformLocation(ptProgram, "part");
+				ptRNG = glGetUniformLocation(ptProgram, "rng");
 				ptBlockType = glGetUniformLocation(ptProgram, "blockType");
+				ptBlockSize = glGetUniformLocation(ptProgram, "blockSize");
 				ptPlaceBlock = glGetUniformLocation(ptProgram, "placeBlock");
-				ptTimeUniform = glGetUniformLocation(ptProgram, "time");
+				ptDimension = glGetUniformLocation(ptProgram, "dimension");
 
 				glUseProgram(ptProgram);
 				glUniform1ui(ptDimension, dimension);
-				glUniform1ui(ptMaxVelocity, maxVelocity);
-				glUniform1ui(ptSpacing, spacing);
 
 
 				loadRTShader(rtProgram);
 
-				rtResolutionUniform = glGetUniformLocation(rtProgram, "resolution");
-				rtCamPosUniform = glGetUniformLocation(rtProgram, "cameraPos");
-				rtCamMatUniform = glGetUniformLocation(rtProgram, "cameraMat");
-				rtBlockDistUniform = glGetUniformLocation(rtProgram, "blockDist");
-				rtPlaceBlock = glGetUniformLocation(rtProgram, "placeBlock");
+				rtResolution = glGetUniformLocation(rtProgram, "resolution");
+				rtCamPos = glGetUniformLocation(rtProgram, "cameraPos");
+				rtCamMat = glGetUniformLocation(rtProgram, "cameraMat");
 				rtDimension = glGetUniformLocation(rtProgram, "dimension");
+				rtBlockDist = glGetUniformLocation(rtProgram, "blockDist");
+				rtBlockSize = glGetUniformLocation(rtProgram, "blockSize");
+				rtPlaceBlock = glGetUniformLocation(rtProgram, "placeBlock");
+				rtUpdateDist = glGetUniformLocation(rtProgram, "updateDist");
+				rtDrawLines = glGetUniformLocation(rtProgram, "drawLines");
 
 				glUseProgram(rtProgram);
-				glUniform2i(rtResolutionUniform, framebufferWidth, framebufferHeight);
-				glUniform1ui(ptDimension, dimension);
-			}*/
+				glUniform2i(rtResolution, framebufferWidth, framebufferHeight);
+				glUniform1ui(rtDimension, dimension);
+			}
 
 			renderPacer.tick();
 		}
@@ -323,6 +338,8 @@ void App::run() {
 	// Input thread
 	Timer inputPacer(500);
 	unsigned int timeDelta;
+	glm::vec3 prevFacingRay {0};
+	bool prevQ = false;
 
 	while (!glfwWindowShouldClose(window)) {
 		timeDelta = inputPacer.tick();
@@ -331,44 +348,66 @@ void App::run() {
 		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 			glfwSetWindowShouldClose(window, GLFW_TRUE);
 
+		bool cameraChanged = false;
+
 		dataLock.lock();
 
 		player.handleInputs(window);
 		player.update(timeDelta);
 
-		// block distance
-		if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)
-			blockDist = glm::min(blockDist + 0.05f, 100.f);
+		glm::vec3 facingRay = player.camera.facingRay();
 
-		else if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)
-			blockDist = glm::max(blockDist - 0.05f, 0.5f);
+		if (distUpdated) {
+			if (facingRay != prevFacingRay  ||  glm::any(glm::greaterThan(glm::abs(player.velocity), glm::vec3(0)))) {
+				updateDist = 1;
+				distUpdated = false;
+			}
+			else
+				updateDist = 0;
+		}
+
+
+		// block distance
+		if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS) {
+			blockDist = glm::min(blockDist + 0.05f, 200.f);
+			updateDist = 1;
+			distUpdated = false;
+		}
+		else if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS) {
+			blockDist = glm::max(blockDist - 0.05f, blockSize);
+			updateDist = 1;
+			distUpdated = false;
+		}
 
 
 		// block type
-		if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS)
-			blockType = 0;
-
-		if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS)
-			blockType = 1;
-
-		else if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS)
-			blockType = 2;
-
-		else if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS)
-			blockType = 3;
+		if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS)		blockType = 0;
+		else if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS)	blockType = 1;
+		else if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS)	blockType = 2;
+		else if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS)	blockType = 3;
 
 
 		// place block
-		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-			if(!placeBlock)
-				placeBlock = 1;
+		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS)
+			placeBlock = 1;
+		else
+			placeBlock = 0;
+
+		// toggle draw lines
+		if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+			if (!prevQ) {
+				if(drawLines) drawLines = 0;
+				else drawLines = 1;
+			}
+			prevQ = true;
 		}
-		else {
-			if (placeBlock)
-				placeBlock = 0;
-		}
+		else
+			prevQ = false;
 
 		dataLock.unlock();
+
+
+		prevFacingRay = facingRay;
 	}
 
 	render_thread.join();

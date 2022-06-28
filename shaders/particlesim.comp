@@ -11,10 +11,12 @@ layout(local_size_x = gDim, local_size_y = gDim, local_size_z = gDim) in;
 uniform uint currentFlag;
 uniform ivec3 part;
 
-uniform int time;
+uniform float rng;
 
 uniform uint blockType;
+uniform float blockSize;
 uniform bool placeBlock;
+
 
 //uniform uint dimension;
 //uniform uint maxVelocity;
@@ -26,35 +28,39 @@ layout(binding = 0, std430) restrict readonly buffer BlockLocation {
 
 const uint FLAG = 0x80;
 const uint TYPE = 0x7F;
-const uint VEL_X = 0xFF000000;
-const uint VEL_Y = 0x00FF0000;
-const uint VEL_Z = 0x0000FF00;
+const uint ACC_X = 0xF0000000;
+const uint ACC_Y = 0x0F000000;
+const uint ACC_Z = 0x00F00000;
+const uint VEL_X = 0x000F0000;
+const uint VEL_Y = 0x0000F000;
+const uint VEL_Z = 0x00000F00;
+
 layout(r32ui, binding = 1) coherent uniform uimage3D gridTexture;
 
 
 // adapted from https://www.shadertoy.com/view/4djSRW (volume warning!)
 float random4to1(vec4 p4) {
-	p4 = fract(p4 * vec4(.1031f, .1030f, .0973f, .1099f));
-    p4 += dot(p4, p4.wzxy + 33.33f);
+	p4 = fract(p4 * vec4(.1031, .1030, .0973, .1099));
+    p4 += dot(p4, p4.wzxy + 33.33);
     return fract((p4.x + p4.y + p4.z) * p4.w);
 }
 
 vec2 random4to2(vec4 p4) {
-	p4  = fract(p4 * vec4(.1031f, .1030f, .0973f, .1099f));
-    p4 += dot(p4, p4.wzxy + 33.33f);
+	p4  = fract(p4 * vec4(.1031, .1030, .0973, .1099));
+    p4 += dot(p4, p4.wzxy + 33.33);
     return fract((p4.xz + p4.yw + p4.zx) * p4.wy);
 }
 
 vec3 random4to3(vec4 p4) {
-	p4  = fract(p4 * vec4(.1031f, .1030f, .0973f, .1099f));
-    p4 += dot(p4, p4.wzxy + 33.33f);
+	p4  = fract(p4 * vec4(.1031, .1030, .0973, .1099));
+    p4 += dot(p4, p4.wzxy + 33.33);
     return fract((p4.xyz + p4.yzw + p4.zwx) * p4.wxy);
 }
 
 vec4 random4to4(vec4 p4) {
-	p4 = fract(p4  * vec4(.1031f, .1030f, .0973f, .1099f));
-    p4 += dot(p4, p4.wzxy + 33.33f);
-    return fract((p4.xxyz+p4.yzzw)*p4.zywx);
+	p4 = fract(p4  * vec4(.1031, .1030, .0973, .1099));
+    p4 += dot(p4, p4.wzxy + 33.33);
+    return fract((p4.xxyz + p4.yzzw) * p4.zywx);
 }
 
 
@@ -72,9 +78,9 @@ void main() {
 
 	uint voxel = imageLoad(gridTexture, pos).r;
 
-	// if it's air, return quickly to optimize empty space
+	// if it's air, return quickly to optimize large empty space
 	if(voxel == AIR) {
-		if(placeBlock  &&  blockType != AIR  &&  distance(pos, blockLocation) < 5.f) {
+		if(placeBlock  &&  blockType != AIR  &&  distance(pos, blockLocation) < blockSize) {
 			imageStore(gridTexture, pos, uvec4(currentFlag | blockType));
 			memoryBarrier();
 		}
@@ -82,7 +88,7 @@ void main() {
 		return;
 	}
 	// otherwise, if deleting blocks
-	else if(placeBlock  &&  blockType == AIR  &&  distance(pos, blockLocation) < 5.f) {
+	else if(placeBlock  &&  blockType == AIR  &&  distance(pos, blockLocation) < blockSize) {
 		imageStore(gridTexture, pos, uvec4(AIR));
 		memoryBarrier();
 		return;
@@ -94,18 +100,23 @@ void main() {
 
 	voxel ^= FLAG;  // toggle flag bit
 	
+	
 	barrier();  // get all voxel values in this group before continuing
 
+
+	// call particle methods
 	uint newVoxel = voxel;
 	if((voxel & TYPE) == SAND) newVoxel = Sand(voxel, pos);
 	else if((voxel & TYPE) == WATER) newVoxel = Water(voxel, pos);
 
+	// if the particle hasn't changed store with new flag
 	if(newVoxel == voxel) {
 		imageStore(gridTexture, pos, uvec4(newVoxel));
 		return;
 	}
 	
-	if(placeBlock  &&  newVoxel == AIR  &&  blockType != AIR  &&  distance(pos, blockLocation) < 5.f) {
+	// if particle moved and this cell is now air, fill with new material
+	if(placeBlock  &&  newVoxel == AIR  &&  blockType != AIR  &&  distance(pos, blockLocation) < blockSize) {
 		imageStore(gridTexture, pos, uvec4(currentFlag | blockType));
 	}
 }
@@ -120,15 +131,25 @@ uint swapIfAvailable(ivec3 pos, ivec3 nPos, uint voxel) {
 	return voxel;
 }
 
+uint swapIfBlock(ivec3 pos, ivec3 nPos, uint voxel, uint nVoxel) {
+	if(imageLoad(gridTexture, nPos).r == nVoxel) {
+		imageStore(gridTexture, nPos, uvec4(voxel));
+		imageStore(gridTexture, pos, uvec4(voxel = nVoxel));
+		memoryBarrier();
+	}
+
+	return voxel;
+}
+
 
 uint Sand(uint voxel, ivec3 pos) {
 	if(pos.y > 0) {
 		// straight down
 		voxel = swapIfAvailable(pos, pos + ivec3(0, -1, 0), voxel);
-		if(voxel != SAND) return voxel;
+		if(voxel == AIR) return voxel;
 
 		// lateral-down
-		ivec4 rand = ivec4(floor(random4to4(vec4(pos, time)) * vec4(1.999f, 1.999f, 2.999f, 2.999f)));
+		ivec4 rand = ivec4(floor(random4to4(vec4(pos, rng)) * vec4(1.999, 1.999, 2.999, 2.999)));
 		rand.xy = (2 * rand.xy - 1);
 
 		for (int i = 0; i < 3; i++) {
@@ -136,9 +157,12 @@ uint Sand(uint voxel, ivec3 pos) {
 				ivec2 nPos = (ivec2(i, j) * rand.xy + rand.zw) % 3 - 1;
 				if(nPos == ivec2(0)) continue;
 				voxel = swapIfAvailable(pos, pos + ivec3(nPos.x, -1, nPos.y), voxel);
-				if(voxel != SAND) return voxel;
+				if(voxel == AIR) return voxel;
 			}
 		}
+		
+		// if updated water below
+		voxel = swapIfBlock(pos, pos + ivec3(0, -1, 0), voxel, (currentFlag | WATER));
 	}
 
 	return voxel;
@@ -149,10 +173,10 @@ uint Water(uint voxel, ivec3 pos) {
 	if(pos.y > 0) {
 		// straight down
 		voxel = swapIfAvailable(pos, pos + ivec3(0, -1, 0), voxel);
-		if(voxel != WATER) return voxel;
+		if(voxel == AIR) return voxel;
 	}
 
-	ivec4 rand = ivec4(floor(random4to4(vec4(pos, time)) * vec4(1.999f, 1.999f, 2.999f, 2.999f)));
+	ivec4 rand = ivec4(floor(random4to4(vec4(pos, rng)) * vec4(1.999, 1.999, 2.999, 2.999)));
 	rand.xy = (2 * rand.xy - 1);
 
 	// lateral-down
@@ -162,7 +186,7 @@ uint Water(uint voxel, ivec3 pos) {
 				ivec2 nPos = (ivec2(i, j) * rand.xy + rand.zw) % 3 - 1;
 				if(nPos == ivec2(0)) continue;
 				voxel = swapIfAvailable(pos, pos + ivec3(nPos.x, -1, nPos.y), voxel);
-				if(voxel != WATER) return voxel;
+				if(voxel == AIR) return voxel;
 			}
 		}
 	}
@@ -173,9 +197,12 @@ uint Water(uint voxel, ivec3 pos) {
 			ivec2 nPos = (ivec2(i, j) * rand.xy + rand.zw) % 3 - 1;
 			if(nPos == ivec2(0)) continue;
 			voxel = swapIfAvailable(pos, pos + ivec3(nPos.x, 0, nPos.y), voxel);
-			if(voxel != WATER) return voxel;
+			if(voxel == AIR) return voxel;
 		}
 	}
+	
+	// if updated sand above
+	voxel = swapIfBlock(pos, pos + ivec3(0, 1, 0), voxel, (currentFlag | SAND));
 
 	return voxel;
 }

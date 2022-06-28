@@ -15,7 +15,11 @@ uniform mat3 cameraMat;
 uniform uint dimension;
 
 uniform float blockDist;
+uniform float blockSize;
 uniform bool placeBlock;
+uniform bool updateDist;
+
+uniform bool drawLines;
 
 
 layout(binding = 0, std430) restrict buffer BlockLocation {
@@ -27,8 +31,15 @@ layout(r32ui, binding = 1) restrict readonly uniform uimage3D gridTexture;
 
 
 // constants
-const float maxDrawDist = 400.f;
+const float maxDrawDist = 300;
 
+const float tLineThresh = .01;
+const float lineFactor = .004;
+
+const float tDistThresh = .01;
+
+
+// block types
 const uint TYPE = 0x7F;
 #define AIR 0
 #define ROCK 1
@@ -44,8 +55,8 @@ float maxComponent(vec3 v) {
     return max(max(v.x, v.y), v.z);
 }
 
-vec3 castRay(vec3 origin, vec3 dir) {
-    vec3 inverseDir = 1.f / dir;
+vec3 castRay(vec3 origin, vec3 dir, bool blockDistRay) {
+    vec3 inverseDir = 1 / dir;
     vec3 bias = inverseDir * origin;
 
     vec3 boundsMin = -bias;
@@ -54,22 +65,16 @@ vec3 castRay(vec3 origin, vec3 dir) {
     float tMin = maxComponent(min(boundsMin, boundsMax));
     float tMax = minComponent(max(boundsMin, boundsMax));
 
-	// the location ray uses a shader invocation at the center of the screen
-	// to hitscan for block placement and draw a white dot for a reticle.
-	// Should probably be moved this to it's own shader, but the performance
-	// hit isn't noticable at the current low resolutions.
-	bool locationRay = all(equal(gl_GlobalInvocationID.xy, resolution/2));
-
-	tMin = max(tMin, 0.f);
+	tMin = max(tMin, 0);
 
 	// Ray misses bounding cube
     if (tMin > tMax) {
-		if(locationRay) {
+		if(blockDistRay) {
 			blockLocation = uvec3(dimension + uint(blockDist));
-			return vec3(1.f);
+			return vec3(1);
 		}
 
-        return vec3(0.f);
+        return vec3(0);
 	}
 
     origin += dir * tMin;
@@ -78,27 +83,25 @@ vec3 castRay(vec3 origin, vec3 dir) {
     vec3 tDelta = abs(inverseDir);
     vec3 dirSign = sign(dir);
     ivec3 step = ivec3(dirSign);
-    vec3 sideDist = (dirSign * (floor(origin) - origin + 0.5f) + 0.5f) * tDelta;
+    vec3 sideDist = (dirSign * (floor(origin) - origin + 0.5) + 0.5) * tDelta;
 
-    float t = 0.f;
+    float t = 0;
+	const float tBound = tMax - tMin;
 
-	
-	// block location ray cast
-	if(locationRay) {
-		if(!placeBlock) {
+	if(blockDistRay) {
+		if(updateDist) {
 			ivec3 lastPos = ivec3(dimension + uint(blockDist));
 
-			while (t < (tMax - tMin) && (tMin + t) < blockDist) {
-		        bvec3 mask = lessThanEqual(sideDist.xyz, min(sideDist.yzx, sideDist.zxy));
-
-		        float t0 = minComponent(sideDist);
-
-				if(imageLoad(gridTexture, pos).r != 0)
+			while (t < tBound  &&  t < (tBound - tDistThresh)  &&  (tMin + t) < blockDist) {
+				if(!placeBlock  &&  imageLoad(gridTexture, pos).r != AIR)
 					break;
 
-		        t = t0;
-
-		        sideDist += mix(vec3(0.f), tDelta, mask);
+				// dda traversal
+		        float tPrev = t;
+				t = minComponent(sideDist);
+				
+				bvec3 mask = lessThanEqual(sideDist.xyz, min(sideDist.yzx, sideDist.zxy));
+		        sideDist += mix(vec3(0), tDelta, mask);
 				lastPos = pos;
 		        pos += mix(ivec3(0), step, mask);
 		    }
@@ -106,42 +109,63 @@ vec3 castRay(vec3 origin, vec3 dir) {
 			blockLocation = uvec3(lastPos);
 		}
 
-		return vec3(1.f);
+		return vec3(1);
 	}
-	// ray cast for drawing image
 	else {
-	    while (t < (tMax - tMin) && (tMin + t < maxDrawDist)) {
-	        bvec3 mask = lessThanEqual(sideDist.xyz, min(sideDist.yzx, sideDist.zxy));
+		const float bgColor = .15;
+		float lineColor = 0;
+		float placeColor = 0;
+		bvec3 mask = bvec3(false);
+	    while (t < tBound  &&  (tMin + t < maxDrawDist)) {
+			float distFromBlockLoc = distance(pos, blockLocation);
 
-	        float t0 = minComponent(sideDist);
-
-			if(all(equal(pos, blockLocation)))
-				return vec3(.5f);
+			if(distFromBlockLoc < blockSize)
+				placeColor = .5;
 
 			uint voxel = imageLoad(gridTexture, pos).r & TYPE;
-			if(voxel != 0) {
-				if(voxel == ROCK)		return vec3(.26f, .25f, .22f);
-				else if(voxel == SAND)	return vec3(.98f, .69f, .01f);
-				else if(voxel == WATER)	return vec3(.17f, .25f, .31f);
+			if(voxel != AIR) {
+				float shadowIntensity = float(mask.x) * .5 + float(mask.y) * .8 + float(mask.z) * .6;
+				if(voxel == ROCK)		return vec3(min(placeColor + lineColor, .7f)) + vec3(.26, .25, .22) * vec3(shadowIntensity);
+				else if(voxel == SAND)	return vec3(min(placeColor + lineColor, .7f)) + vec3(.98, .69, .01) * vec3(shadowIntensity);
+				else if(voxel == WATER)	return vec3(min(placeColor + lineColor, .7f)) + vec3(.17, .25, .31) * vec3(shadowIntensity);
 			}
 
-	        t = t0;
 
-	        sideDist += mix(vec3(0.f), tDelta, mask);
+			// dda traversal
+			float tPrev = t;
+	        t = minComponent(sideDist);
+
+			// draw lines when change in t is very small
+			if(drawLines  &&  (t > tLineThresh)  &&  abs(tPrev - t) < (t * lineFactor)) {
+				if(t < (blockDist + blockSize)) {
+					float thisLine = min(max(blockSize / blockDist, .05), .6);
+					lineColor = min(lineColor + thisLine, .8f);
+				}
+			}
+			
+			mask = lessThanEqual(sideDist.xyz, min(sideDist.yzx, sideDist.zxy));
+	        sideDist += mix(vec3(0), tDelta, mask);
 	        pos += mix(ivec3(0), step, mask);
 	    }
 
-		return vec3(.1f);
+		return vec3(bgColor + lineColor + placeColor);
 	}
-
-    return vec3(0.f);
 }
 
 
 void main() {
-	vec3 rayVec = normalize(vec3((gl_GlobalInvocationID.xy-(0.5f*resolution))/resolution.y, 1.f)) * cameraMat;
+	// use first shader invocation for block location to remove tearing
+	ivec2 screenPos = ivec2(gl_GlobalInvocationID.xy);
+	bool blockDistRay = false;
+	if(screenPos == ivec2(0)) {
+		screenPos = resolution/2;
+		blockDistRay = true;
+	}
+	else if(screenPos == resolution/2)
+		screenPos = ivec2(0);
 
-    vec3 color = castRay(cameraPos, rayVec);
+	vec3 rayVec = normalize(vec3((screenPos - (0.5 * resolution)) / resolution.y, 1)) * cameraMat;
+	vec3 color = castRay(cameraPos, rayVec, blockDistRay);
 
-    imageStore(rtTexture, ivec2(gl_GlobalInvocationID.xy), vec4(color, 0.f));
+    imageStore(rtTexture, screenPos, vec4(color, 0));
 }
