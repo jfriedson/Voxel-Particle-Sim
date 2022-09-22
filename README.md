@@ -47,13 +47,11 @@ L - toggle grid lines
 
 
 ## Current Limitations
-Due to memory coherency only being guaranteed between shader invocations in the same work group and the fact that my gtx 1080 caps the group size to 8**3, the maximum velocity of a particle is 4 voxels per simulation step on my hardware.  This limitation can be cover up by comparing a random value to the simulation multiple times between renderings.
-
-The unpredictable nature of shader execution makes it difficult to have particles interact.
+Due to memory coherency only being guaranteed between shader invocations in the same work group and the fact that my gtx 1080 caps the group size to 8**3, the maximum velocity of a particle is 4 voxels per simulation step on my hardware.  This limitation is caused by the need to gurantee that voxels being processed in parallel cannot not overwrite the same voxel space. This can be covered up by comparing a random value to the fractional part of a particle's velocity.
 
 
 ## Changelog
-- Some particle interaction (sand sinks in water, kind of) needs work
+- Some particle interaction is buggy, need to look into solution for two particles switching places causing an issue 
 
 - Fake lighting based on direction of voxel face.
 
