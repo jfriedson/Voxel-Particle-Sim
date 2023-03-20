@@ -1,9 +1,9 @@
-# Voxel Particles
+# Voxel Particle Simulator
 This project simulates particle interactions using voxels in a GLSL compute shader.
 
 This relies on [VoxGL](https://github.com/jfriedson/voxgl) for OpenGL interaction.
 
-The screenshots below depict a world size of 256 from a sub-performant implementation. I will update these soon.
+The screenshots below depict a world size of 256^3. Worlds can be scaled up to 1024^3 with a single SSBO, but the physics shader and render shader compete for computation power so the draw distance must be lowered on a GTX 1080.
 ![Screenshot of waterfall](screenshots/waterfall.png?raw=true)
 
 
@@ -11,7 +11,7 @@ The screenshots below depict a world size of 256 from a sub-performant implement
 When I started this project, the goal was to utilize the GPU for both simulating and rendering voxel particles. This has the benefits of parallel computation and eliminates the need to transfer large textues or storage buffers between the GPU and CPU.
 
 
-## Best Settings on a GTX 1080
+## Decent settings options for a GTX 1080
 For a large world size and 30fps use:
 - world demensions of 1024
 - simIterations to 1
@@ -67,10 +67,7 @@ Due to memory coherency only being guaranteed between shader invocations in the 
 
 
 ## To-do
-- Organize c++ program into functions and/or classes
-
 - Switch to a kinematic simulation instead of the current cellular automata-like approach for particle movement.
-
 
 - There is a bug where rendering the camera from a position with a negative component results in a jittery image. It seems to be a miscalculation in the ray origin or angle with negative values. Still searching for the fix.
 

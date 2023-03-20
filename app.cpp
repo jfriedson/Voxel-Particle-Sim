@@ -17,7 +17,7 @@ App::App() {
 
 	setupShaders();
 	
-	createObjects();
+	setupObjects();
 }
 
 App::~App() {
@@ -131,9 +131,9 @@ void App::setupPhysicsShader() {
 }
 
 
-void App::createObjects() {
+void App::setupObjects() {
 	worldObjects.player.position = glm::vec3{ static_cast<float>(physProperties.dimension + 30) };
-	worldObjects.player.camera.direction = glm::vec2{ -.3f, 0.5f };
+	worldObjects.player.camera.direction = glm::vec2{ -2.35f, -.3f };
 }
 
 

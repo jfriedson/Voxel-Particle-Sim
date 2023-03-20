@@ -112,7 +112,7 @@ private:
 	void setupRenderShader();
 	void setupPhysicsShader();
 
-	void createObjects();
+	void setupObjects();
 
 	void loadPTShader();
 	void loadRTShader();
