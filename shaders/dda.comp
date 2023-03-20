@@ -56,16 +56,14 @@ float maxComponent(vec3 v) {
 }
 
 vec3 castRay(vec3 origin, vec3 dir, bool blockDistRay) {
-    vec3 inverseDir = 1 / dir;
-    vec3 bias = inverseDir * origin;
+    const vec3 inverseDir = 1.f / dir;
+	const vec3 bias = inverseDir * origin;
 
-    vec3 boundsMin = -bias;
-    vec3 boundsMax = dimension * inverseDir - bias;
+    const vec3 boundsMin = -bias;
+    const vec3 boundsMax = dimension * inverseDir - bias;
 
-    float tMin = maxComponent(min(boundsMin, boundsMax));
-    float tMax = minComponent(max(boundsMin, boundsMax));
-
-	tMin = max(tMin, 0);
+    const float tMin = max(0, maxComponent(min(boundsMin, boundsMax)));
+	const float tMax = 		  minComponent(max(boundsMin, boundsMax));
 
 	// Ray misses bounding cube
     if (tMin > tMax) {
@@ -155,6 +153,7 @@ vec3 castRay(vec3 origin, vec3 dir, bool blockDistRay) {
 
 void main() {
 	// use first shader invocation for block location to remove tearing
+	// and use center pixel invocation to fill in first invocation pixel
 	ivec2 screenPos = ivec2(gl_GlobalInvocationID.xy);
 	bool blockDistRay = false;
 	if(screenPos == ivec2(0)) {

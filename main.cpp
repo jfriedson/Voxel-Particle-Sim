@@ -1,6 +1,6 @@
 // 3D particle simulator running on GPU using a compute shader
 
-#include "app.h"
+#include "App.h"
 
 
 int main() {
