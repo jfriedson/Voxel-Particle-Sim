@@ -13,6 +13,22 @@
 
 class App
 {
+public:
+	static App& getInstance(void) {
+		static App instance;
+		return instance;
+	}
+
+	App(const App&) = delete;
+	App& operator=(const App&) = delete;
+
+	~App();
+
+	void scrollCallback(GLFWwindow* window, double xoffset, double yoffset);
+
+	void run();
+
+
 private:
 	struct {
 		const int windowWidth = 1280, windowHeight = 720;
@@ -96,16 +112,8 @@ private:
 	} worldObjects;
 
 
-public:
 	App();
-	~App();
 
-	void scrollCallback(GLFWwindow* window, double xoffset, double yoffset);
-
-	void run();
-
-
-private:
 	void createWindow();
 
 	void setupShaders();

@@ -4,8 +4,7 @@
 
 
 int main() {
-	App app;
-	app.run();
+	App::getInstance().run();
 
 	return 0;
 }
