@@ -47,7 +47,7 @@ L - toggle grid lines
 
 
 ## Current Limitations
-Due to memory coherency only being guaranteed between shader invocations in the same work group and the fact that my gtx 1080 caps the group size to 8**3, the maximum velocity of a particle is 4 voxels per simulation step on my hardware.  This limitation is caused by the need to gurantee that voxels being processed in parallel cannot not overwrite the same voxel space. This can be covered up by comparing a random value to the fractional part of a particle's velocity.
+Due to memory coherency only being guaranteed between shader invocations in the same work group and the fact that my gtx 1080 caps the group size to 8**3, the maximum velocity of a particle is 4 voxels per simulation step on my hardware.  This limitation is caused by the need to gurantee that voxels being processed in parallel cannot not overwrite the same voxel space. This can be masked by comparing a random value to the fractional part of a particle's velocity.
 
 
 ## Changelog
