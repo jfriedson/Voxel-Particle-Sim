@@ -51,17 +51,17 @@ Due to memory coherency only being guaranteed between shader invocations in the 
 
 
 ## Changelog
-- Some particle interaction is buggy, need to look into solution for two particles switching places causing an issue 
+- Some particle interaction is buggy. Need to look into solution for two particles switching places causing an issue 
 
 - Fake lighting based on direction of voxel face.
 
 - Added grid lines. needs tweaking
 
-- Combined the parallel and sequential approaches to provide a significant performance boost that makes simulation about 60 times faster than either of the techniques individually.
+- The parallel approach provides a significant performance boost that makes simulation about 60 times faster than fully sequential.
 
 - Use an alternating flag to prevent particles from updating more than once a simulation step.
 
-- I realized that the simulation can be parallelized by updating voxels in a checkered pattern with sufficient space between the voxels so that particles that are updated simulatenously can't move to the same empty voxel.
+- The simulation can be parallelized by updating voxels in a checkered pattern with sufficient space between the voxels so that particles that are updated simulatenously can't move to the same empty voxel.
 
 - Fixed a broken rendering optimization
 
