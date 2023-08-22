@@ -57,7 +57,7 @@ Due to memory coherency only being guaranteed between shader invocations in the 
 
 - Added grid lines. needs tweaking
 
-- The parallel approach provides a significant performance boost that makes simulation about 60 times faster than fully sequential.
+- Parallelization speeds up the simulation about 60 times over the fully sequential approach with a world size of 256^3.
 
 - Use an alternating flag to prevent particles from updating more than once a simulation step.
 
